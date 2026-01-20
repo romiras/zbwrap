@@ -27,13 +27,6 @@ type RepoDetails struct {
 	Backups        []BackupItem `json:"backups"`
 }
 
-// MetadataSidecar represents the .meta.json file structure
-type MetadataSidecar struct {
-	MimeType    string `json:"mime_type"`
-	Description string `json:"description"`
-	Status      string `json:"status,omitempty"` // boolean or string in spec, keeping string for now
-}
-
 // RepositoryInspector handles inspection logic
 type RepositoryInspector struct{}
 
