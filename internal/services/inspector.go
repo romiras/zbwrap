@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -131,4 +132,107 @@ func (i *RepositoryInspector) Inspect(alias, path string) (*RepoDetails, error) 
 	})
 
 	return details, nil
+}
+
+// Sync performs a synchronization of the repository, generating missing metadata.
+// If deep is true, it attempts to detect MIME types by restoring the beginning of the backup.
+func (i *RepositoryInspector) Sync(zbackupPath, repoPath string, deep bool, passwordFile string) error {
+	backupsDir := filepath.Join(repoPath, "backups")
+	entries, err := os.ReadDir(backupsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read backups directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".zbk" {
+			continue
+		}
+
+		zbkPath := filepath.Join(backupsDir, entry.Name())
+		metaPath := zbkPath + ".meta"
+
+		var meta MetadataSidecar
+		metaExists := false
+
+		if data, err := os.ReadFile(metaPath); err == nil {
+			if err := json.Unmarshal(data, &meta); err == nil {
+				metaExists = true
+			}
+		}
+
+		if !metaExists {
+			// Lazy: Create skeleton
+			meta = MetadataSidecar{
+				MimeType: "unknown",
+				Status:   "complete",
+			}
+			if err := i.saveMetadata(metaPath, meta); err != nil {
+				// Don't abort, just log or skip? For now, we return error as this is crucial.
+				// Although failing one shouldn't stop others, we'll try to persist.
+				return fmt.Errorf("failed to write metadata for %s: %w", entry.Name(), err)
+			}
+		}
+
+		if deep && meta.MimeType == "unknown" {
+			mime := i.SniffMimeType(zbackupPath, zbkPath, passwordFile)
+			if mime != "unknown" {
+				meta.MimeType = mime
+				if err := i.saveMetadata(metaPath, meta); err != nil {
+					return fmt.Errorf("failed to update metadata for %s: %w", entry.Name(), err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// SniffMimeType attempts to detect the MIME type of a backup by restoring the first 512 bytes.
+func (i *RepositoryInspector) SniffMimeType(zbackupPath, zbkPath, passwordFile string) string {
+	args := []string{"restore"}
+	if passwordFile != "" {
+		args = append(args, "--password-file", passwordFile)
+	} else {
+		// If no password file is provided, assume non-encrypted and pass the flag
+		// zbackup requires explicit confirmation for non-encrypted restores
+		args = append(args, "--non-encrypted")
+	}
+	args = append(args, zbkPath)
+
+	cmd := exec.Command(zbackupPath, args...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "unknown"
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "unknown"
+	}
+
+	// We only need the first 512 bytes for MIME detection
+	buf := make([]byte, 512)
+	n, err := stdout.Read(buf)
+
+	// Kill the process as we don't need the rest of the stream
+	// Ignore errors from Kill/Wait as we are terminating forcibly
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+
+	if n == 0 {
+		return "unknown"
+	}
+
+	return DetectMimeType(buf[:n])
+}
+
+// saveMetadata writes the metadata to the specified path
+func (i *RepositoryInspector) saveMetadata(path string, meta MetadataSidecar) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }

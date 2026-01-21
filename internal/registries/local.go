@@ -19,6 +19,7 @@ type EncryptionConfig struct {
 
 // LocalRegistry represents the structure of registry.json and implements RepositoryManager
 type LocalRegistry struct {
+	ZBackupPath  string            `json:"zbackup_path" mapstructure:"zbackup_path"`
 	Repositories map[string]string `json:"repositories" mapstructure:"repositories"`
 	Encryption   EncryptionConfig  `json:"encryption" mapstructure:"encryption"`
 	LastUpdated  time.Time         `json:"last_updated" mapstructure:"last_updated"`
@@ -56,6 +57,7 @@ func (r *LocalRegistry) Save() error {
 	defer r.mu.RUnlock()
 
 	r.LastUpdated = time.Now()
+	viper.Set("zbackup_path", r.ZBackupPath)
 	viper.Set("repositories", r.Repositories)
 	viper.Set("encryption", r.Encryption)
 	viper.Set("last_updated", r.LastUpdated)

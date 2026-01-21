@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +47,7 @@ func (r *BackupRunner) Backup(repoPath, suffix, description string, reader io.Re
 		return fmt.Errorf("failed to read for MIME detection: %w", err)
 	}
 	sniffBuf = sniffBuf[:n]
-	mimeType := http.DetectContentType(sniffBuf)
+	mimeType := DetectMimeType(sniffBuf)
 
 	// Combine sniffBuf and the rest of reader
 	combinedReader := io.MultiReader(bytes.NewReader(sniffBuf), reader)
@@ -64,7 +63,13 @@ func (r *BackupRunner) Backup(repoPath, suffix, description string, reader io.Re
 		args = append([]string{"--non-encrypted"}, args...)
 	}
 
-	cmd := exec.Command("zbackup", args...)
+	// Determine zbackup binary path
+	zbackupPath := r.registry.ZBackupPath
+	if zbackupPath == "" {
+		zbackupPath = "zbackup"
+	}
+
+	cmd := exec.Command(zbackupPath, args...)
 	cmd.Stdin = combinedReader
 	cmd.Stderr = os.Stderr // Pipe stderr to our stderr for visibility
 
